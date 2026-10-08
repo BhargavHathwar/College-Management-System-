@@ -6,13 +6,15 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# DB file sits next to this app.py, so it works from any folder
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATABASE = os.path.join(BASE_DIR, "fees.db")
+DATABASE = os.path.join(BASE_DIR, "fee.db")
 
-REGISTRY_URL = "http://localhost:5000"
+REGISTRY_URL = "http://127.0.0.1:5001"
 SERVICE_NAME = "fee_service"
-SERVICE_PORT = 5003
+SERVICE_PORT = 5004
+
+# Demo balance given to any student who has no account yet
+DEFAULT_BALANCE = 50000.0
 
 
 # ---------------- DATABASE ----------------
@@ -26,17 +28,38 @@ def get_db():
 def init_db():
     conn = get_db()
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS fees (
+        CREATE TABLE IF NOT EXISTS accounts (
+            student_id INTEGER PRIMARY KEY,
+            balance REAL NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             student_id INTEGER NOT NULL,
-            description TEXT,
+            course_id INTEGER,
             amount REAL NOT NULL,
-            due_date TEXT,
-            status TEXT DEFAULT 'pending'
+            status TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
     conn.close()
+
+
+def get_balance(conn, student_id):
+    """Return the student's balance, creating a demo account if needed."""
+    row = conn.execute(
+        "SELECT balance FROM accounts WHERE student_id = ?", (student_id,)
+    ).fetchone()
+    if row is None:
+        conn.execute(
+            "INSERT INTO accounts (student_id, balance) VALUES (?, ?)",
+            (student_id, DEFAULT_BALANCE),
+        )
+        conn.commit()
+        return DEFAULT_BALANCE
+    return row["balance"]
 
 
 # ---------------- SERVICE REGISTRY ----------------
@@ -45,7 +68,7 @@ def register_with_registry():
     try:
         requests.post(
             f"{REGISTRY_URL}/register",
-            json={"name": SERVICE_NAME, "url": f"http://localhost:{SERVICE_PORT}"},
+            json={"name": SERVICE_NAME, "url": f"http://127.0.0.1:{SERVICE_PORT}"},
             timeout=3,
         )
         print("Registered with service registry")
@@ -60,115 +83,118 @@ def home():
     return jsonify({"message": "Fee Service is running"})
 
 
-@app.route("/fees", methods=["POST"])
-def add_fee():
-    data = request.get_json(silent=True)
-    if not data or "student_id" not in data or "amount" not in data:
-        return jsonify({"error": "student_id and amount are required"}), 400
-
+@app.route("/api/v1/fees/<int:student_id>", methods=["GET"])
+def get_fees(student_id):
     conn = get_db()
-    cur = conn.execute(
-        "INSERT INTO fees (student_id, description, amount, due_date, status) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (
-            data["student_id"],
-            data.get("description"),
-            data["amount"],
-            data.get("due_date"),
-            data.get("status", "pending"),
-        ),
-    )
-    conn.commit()
-    fee_id = cur.lastrowid
-    conn.close()
-    return jsonify({"message": "Fee added successfully", "id": fee_id}), 201
-
-
-@app.route("/fees", methods=["GET"])
-def get_all_fees():
-    conn = get_db()
-    rows = conn.execute("SELECT * FROM fees").fetchall()
-    conn.close()
-    return jsonify([dict(r) for r in rows])
-
-
-@app.route("/fees/<int:fee_id>", methods=["GET"])
-def get_fee(fee_id):
-    conn = get_db()
-    row = conn.execute("SELECT * FROM fees WHERE id = ?", (fee_id,)).fetchone()
-    conn.close()
-    if not row:
-        return jsonify({"error": "Fee not found"}), 404
-    return jsonify(dict(row))
-
-
-@app.route("/fees/student/<int:student_id>", methods=["GET"])
-def get_student_fees(student_id):
-    conn = get_db()
+    balance = get_balance(conn, student_id)
     rows = conn.execute(
-        "SELECT * FROM fees WHERE student_id = ?", (student_id,)
+        "SELECT * FROM payments WHERE student_id = ? ORDER BY id", (student_id,)
     ).fetchall()
     conn.close()
-    fees = [dict(r) for r in rows]
     return jsonify({
         "student_id": student_id,
-        "total": sum(f["amount"] for f in fees),
-        "pending": sum(f["amount"] for f in fees if f["status"] == "pending"),
-        "fees": fees,
+        "balance": balance,
+        "payments": [dict(r) for r in rows],
     })
 
 
-@app.route("/fees/<int:fee_id>", methods=["PUT"])
-def update_fee(fee_id):
+@app.route("/api/v1/fees/pay", methods=["POST"])
+def pay_fee():
     data = request.get_json(silent=True) or {}
+    student_id = data.get("student_id")
+    # accept either "amount" or "fee" as the field name
+    amount = data.get("amount", data.get("fee"))
+
+    if student_id is None or amount is None:
+        return jsonify({"error": "student_id and amount are required"}), 400
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return jsonify({"error": "amount must be a number"}), 400
+    if amount <= 0:
+        return jsonify({"error": "amount must be greater than 0"}), 400
+
     conn = get_db()
-    fee = conn.execute("SELECT * FROM fees WHERE id = ?", (fee_id,)).fetchone()
-    if not fee:
+    balance = get_balance(conn, student_id)
+
+    if amount > balance:
         conn.close()
-        return jsonify({"error": "Fee not found"}), 404
+        return jsonify({
+            "status": "FAILED",
+            "error": "Insufficient funds in student account",
+        }), 400
 
     conn.execute(
-        "UPDATE fees SET description = ?, amount = ?, due_date = ?, status = ? "
-        "WHERE id = ?",
-        (
-            data.get("description", fee["description"]),
-            data.get("amount", fee["amount"]),
-            data.get("due_date", fee["due_date"]),
-            data.get("status", fee["status"]),
-            fee_id,
-        ),
+        "UPDATE accounts SET balance = balance - ? WHERE student_id = ?",
+        (amount, student_id),
+    )
+    cur = conn.execute(
+        "INSERT INTO payments (student_id, course_id, amount, status) "
+        "VALUES (?, ?, ?, 'PAID')",
+        (student_id, data.get("course_id"), amount),
     )
     conn.commit()
+    payment_id = cur.lastrowid
     conn.close()
-    return jsonify({"message": "Fee updated successfully"})
+
+    return jsonify({
+        "status": "PAID",
+        "payment_id": payment_id,
+        "student_id": student_id,
+        "amount": amount,
+        "balance": balance - amount,
+    }), 200
 
 
-@app.route("/fees/<int:fee_id>/pay", methods=["POST"])
-def pay_fee(fee_id):
+@app.route("/api/v1/fees/refund", methods=["POST"])
+def refund_fee():
+    data = request.get_json(silent=True) or {}
+    payment_id = data.get("payment_id")
+
     conn = get_db()
-    fee = conn.execute("SELECT * FROM fees WHERE id = ?", (fee_id,)).fetchone()
-    if not fee:
-        conn.close()
-        return jsonify({"error": "Fee not found"}), 404
 
-    conn.execute("UPDATE fees SET status = 'paid' WHERE id = ?", (fee_id,))
+    if payment_id is not None:
+        payment = conn.execute(
+            "SELECT * FROM payments WHERE id = ?", (payment_id,)
+        ).fetchone()
+        if payment is None:
+            conn.close()
+            return jsonify({"error": "Payment not found"}), 404
+        if payment["status"] == "REFUNDED":
+            conn.close()
+            return jsonify({"error": "Payment already refunded"}), 400
+        student_id = payment["student_id"]
+        amount = payment["amount"]
+        conn.execute("UPDATE payments SET status = 'REFUNDED' WHERE id = ?",
+                     (payment_id,))
+    else:
+        student_id = data.get("student_id")
+        amount = data.get("amount", data.get("fee"))
+        if student_id is None or amount is None:
+            conn.close()
+            return jsonify({"error": "payment_id, or student_id and amount, required"}), 400
+        amount = float(amount)
+        conn.execute(
+            "INSERT INTO payments (student_id, course_id, amount, status) "
+            "VALUES (?, ?, ?, 'REFUNDED')",
+            (student_id, data.get("course_id"), amount),
+        )
+
+    get_balance(conn, student_id)
+    conn.execute(
+        "UPDATE accounts SET balance = balance + ? WHERE student_id = ?",
+        (amount, student_id),
+    )
     conn.commit()
+    new_balance = get_balance(conn, student_id)
     conn.close()
-    return jsonify({"message": "Fee marked as paid", "id": fee_id})
 
-
-@app.route("/fees/<int:fee_id>", methods=["DELETE"])
-def delete_fee(fee_id):
-    conn = get_db()
-    fee = conn.execute("SELECT * FROM fees WHERE id = ?", (fee_id,)).fetchone()
-    if not fee:
-        conn.close()
-        return jsonify({"error": "Fee not found"}), 404
-
-    conn.execute("DELETE FROM fees WHERE id = ?", (fee_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({"message": "Fee deleted successfully"})
+    return jsonify({
+        "status": "REFUNDED",
+        "student_id": student_id,
+        "amount": amount,
+        "balance": new_balance,
+    }), 200
 
 
 # ---------------- START SERVICE ----------------
