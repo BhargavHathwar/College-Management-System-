@@ -157,42 +157,46 @@ def refund_fee():
         payment = conn.execute(
             "SELECT * FROM payments WHERE id = ?", (payment_id,)
         ).fetchone()
-        if payment is None:
-            conn.close()
-            return jsonify({"error": "Payment not found"}), 404
-        if payment["status"] == "REFUNDED":
-            conn.close()
-            return jsonify({"error": "Payment already refunded"}), 400
-        student_id = payment["student_id"]
-        amount = payment["amount"]
-        conn.execute("UPDATE payments SET status = 'REFUNDED' WHERE id = ?",
-                     (payment_id,))
     else:
         student_id = data.get("student_id")
         amount = data.get("amount", data.get("fee"))
         if student_id is None or amount is None:
             conn.close()
             return jsonify({"error": "payment_id, or student_id and amount, required"}), 400
-        amount = float(amount)
-        conn.execute(
-            "INSERT INTO payments (student_id, course_id, amount, status) "
-            "VALUES (?, ?, ?, 'REFUNDED')",
-            (student_id, data.get("course_id"), amount),
-        )
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            conn.close()
+            return jsonify({"error": "amount must be a number"}), 400
+        # latest matching payment that has not been refunded yet
+        payment = conn.execute(
+            "SELECT * FROM payments WHERE student_id = ? AND amount = ? "
+            "AND status = 'PAID' ORDER BY id DESC LIMIT 1",
+            (student_id, amount),
+        ).fetchone()
 
-    get_balance(conn, student_id)
+    if payment is None:
+        conn.close()
+        return jsonify({"error": "No matching payment found to refund"}), 404
+    if payment["status"] == "REFUNDED":
+        conn.close()
+        return jsonify({"error": "Payment already refunded"}), 400
+
+    conn.execute("UPDATE payments SET status = 'REFUNDED' WHERE id = ?",
+                 (payment["id"],))
     conn.execute(
         "UPDATE accounts SET balance = balance + ? WHERE student_id = ?",
-        (amount, student_id),
+        (payment["amount"], payment["student_id"]),
     )
     conn.commit()
-    new_balance = get_balance(conn, student_id)
+    new_balance = get_balance(conn, payment["student_id"])
     conn.close()
 
     return jsonify({
         "status": "REFUNDED",
-        "student_id": student_id,
-        "amount": amount,
+        "payment_id": payment["id"],
+        "student_id": payment["student_id"],
+        "amount": payment["amount"],
         "balance": new_balance,
     }), 200
 
