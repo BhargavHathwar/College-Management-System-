@@ -2,76 +2,39 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
+# In-memory registry: {"student_service": "http://127.0.0.1:5002"}
 services = {}
 
 
-# GET - Get all registered services
-@app.route("/services", methods=["GET"])
-def get_services():
-    return jsonify(services)
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"message": "Service Registry is running"})
 
 
-# POST - Register a new service
-@app.route("/services", methods=["POST"])
-def register_service():
-    data = request.json
-
-    service_name = data.get("name")
-    service_url = data.get("url")
-
-    if not service_name or not service_url:
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.get_json(silent=True)
+    if not data or "name" not in data or "url" not in data:
         return jsonify({"error": "name and url are required"}), 400
-
-    services[service_name] = {
-        "name": service_name,
-        "url": service_url
-    }
-
+    services[data["name"]] = data["url"]
     return jsonify({
-        "message": "Service registered successfully",
-        "service": services[service_name]
+        "message": "Service registered",
+        "name": data["name"],
+        "url": data["url"],
     }), 201
 
 
-# PUT - Update an existing service
-@app.route("/services/<service_name>", methods=["PUT"])
-def update_service(service_name):
+@app.route("/discover/<service_name>", methods=["GET"])
+def discover(service_name):
     if service_name not in services:
         return jsonify({"error": "Service not found"}), 404
-
-    data = request.json
-
-    services[service_name]["url"] = data.get(
-        "url",
-        services[service_name]["url"]
-    )
-
-    return jsonify({
-        "message": "Service updated successfully",
-        "service": services[service_name]
-    })
+    return jsonify({"name": service_name, "url": services[service_name]})
 
 
-# DELETE - Remove a service
-@app.route("/services/<service_name>", methods=["DELETE"])
-def delete_service(service_name):
-    if service_name not in services:
-        return jsonify({"error": "Service not found"}), 404
-
-    deleted_service = services.pop(service_name)
-
-    return jsonify({
-        "message": "Service deleted successfully",
-        "service": deleted_service
-    })
-
-
-@app.route("/")
-def home():
-    return jsonify({
-        "message": "Service Registry is running"
-    })
+@app.route("/services", methods=["GET"])
+def list_services():
+    return jsonify(services)
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(host="0.0.0.0", port=5001, debug=True)
