@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# In-memory registry: {"student_service": "http://127.0.0.1:5002"}
+# In-memory registry: {"student_service": "http://127.0.0.1:5001"}
 services = {}
 
 
@@ -37,4 +37,4 @@ def list_services():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    app.run(host="0.0.0.0", port=5002, debug=True)

@@ -9,9 +9,9 @@ app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE = os.path.join(BASE_DIR, "fee.db")
 
-REGISTRY_URL = "http://127.0.0.1:5001"
+REGISTRY_URL = "http://127.0.0.1:5002"
 SERVICE_NAME = "fee_service"
-SERVICE_PORT = 5004
+SERVICE_PORT = 5005
 
 # Demo balance given to any student who has no account yet
 DEFAULT_BALANCE = 50000.0
