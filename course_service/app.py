@@ -1,7 +1,12 @@
 from flask import Flask, request, jsonify
 from database import init_db, get_db
+import requests
 
 app = Flask(__name__)
+
+REGISTRY_URL = "http://127.0.0.1:5002"
+SERVICE_NAME = "course_service"
+SERVICE_PORT = 5004
 
 # Initialize the database
 init_db()
@@ -222,6 +227,28 @@ def release_course(course_id):
         "available_seats": course["available_seats"] + 1
     })
 
+def register_with_registry():
+    try:
+        response = requests.post(
+            f"{REGISTRY_URL}/register",
+            json={
+                "name": SERVICE_NAME,
+                "url": f"http://127.0.0.1:{SERVICE_PORT}"
+            },
+            timeout=3
+        )
+        response.raise_for_status()
+        print("Course Service registered successfully")
+
+    except requests.RequestException as exc:
+        print(f"Could not register Course Service: {exc}")
+
+
 # Start the Course Service
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5004, debug=True)
+    register_with_registry()
+    app.run(
+        host="0.0.0.0",
+        port=SERVICE_PORT,
+        debug=True
+    )
