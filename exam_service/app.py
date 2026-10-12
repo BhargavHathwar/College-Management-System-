@@ -1,9 +1,13 @@
 from flask import Flask, request, jsonify
 import sqlite3
 from datetime import datetime
+import requests
+import os
 
 app = Flask(__name__)
 
+REGISTRY_URL = "http://127.0.0.1:5002"
+SERVICE_NAME = "exam_service"
 EXAM_PORT = 5007
 DATABASE = "exam_service/exam.db"
 
@@ -368,10 +372,25 @@ def get_transcript(student_id):
         ]
     }), 200
 
+def register_with_registry():
+    try:
+        response = requests.post(
+            f"{REGISTRY_URL}/register",
+            json={
+                "name": SERVICE_NAME,
+                "url": f"http://127.0.0.1:{EXAM_PORT}"
+            },
+            timeout=3
+        )
+        response.raise_for_status()
+        print("Exam & Grading Service registered successfully")
+
+    except requests.RequestException as exc:
+        print(f"Could not register Exam Service: {exc}")
 
 if __name__ == "__main__":
     initialize_database()
-
+    register_with_registry()
     app.run(
         host="127.0.0.1",
         port=EXAM_PORT,

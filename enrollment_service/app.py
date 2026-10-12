@@ -27,23 +27,35 @@ from saga import EnrollmentSagaCoordinator
 app = Flask(__name__)
 
 # Service configuration
-SERVICE_NAME = "enrollment_service"
-SERVICE_PORT = int(os.environ.get("PORT", 5005))
-REGISTRY_URL = os.environ.get("REGISTRY_URL", "http://127.0.0.1:5001")
 
-# Default service URLs (fallbacks if registry is not active)
+# Service configuration
+SERVICE_NAME = "enrollment_service"
+SERVICE_PORT = int(os.environ.get("PORT", 5006))
+
+REGISTRY_URL = os.environ.get(
+    "REGISTRY_URL",
+    "http://127.0.0.1:5002"
+)
+
+# Default service URLs (fallbacks if registry is unavailable)
 DEFAULT_SERVICE_URLS = {
-    "student_service": os.environ.get("STUDENT_SERVICE_URL", "http://127.0.0.1:5002"),
-    "course_service": os.environ.get("COURSE_SERVICE_URL", "http://127.0.0.1:5003"),
-    "fee_service": os.environ.get("FEE_SERVICE_URL", "http://127.0.0.1:5004"),
+    "student_service": os.environ.get(
+        "STUDENT_SERVICE_URL", "http://127.0.0.1:5003"
+    ),
+    "course_service": os.environ.get(
+        "COURSE_SERVICE_URL", "http://127.0.0.1:5004"
+    ),
+    "fee_service": os.environ.get(
+        "FEE_SERVICE_URL", "http://127.0.0.1:5005"
+    ),
 }
 
-# Alternate port fallbacks (e.g., student at 5003, course at 5004, fee at 5005)
 ALT_SERVICE_URLS = {
     "student_service": "http://127.0.0.1:5003",
     "course_service": "http://127.0.0.1:5004",
     "fee_service": "http://127.0.0.1:5005",
 }
+
 
 # Cache for discovered service URLs
 discovered_cache = {}
@@ -60,7 +72,7 @@ def discover_service(service_name: str) -> str:
     with smart fallback to known ports.
     """
     # 1. Try Primary Registry URL (e.g., port 5001)
-    for reg_url in [REGISTRY_URL, "http://127.0.0.1:5002"]:
+    for reg_url in [REGISTRY_URL]:
         try:
             resp = requests.get(f"{reg_url}/discover/{service_name}", timeout=1.5)
             if resp.status_code == 200:
@@ -112,7 +124,7 @@ def register_with_registry():
         {"name": "enrollments", "url": f"http://127.0.0.1:{SERVICE_PORT}"},
         {"name": "enroll", "url": f"http://127.0.0.1:{SERVICE_PORT}"}
     ]
-    for reg_url in [REGISTRY_URL, "http://127.0.0.1:5002"]:
+    for reg_url in [REGISTRY_URL]:
         for item in service_urls:
             try:
                 requests.post(f"{reg_url}/register", json=item, timeout=2)
